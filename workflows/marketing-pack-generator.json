@@ -1,0 +1,396 @@
+{
+  "name": "Product Marketing Pack Generator (UAE)",
+  "nodes": [
+    {
+      "id": "form_trigger",
+      "name": "Product Marketing Pack (UAE)",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [-1120, 0],
+      "parameters": {
+        "formTitle": "Product Marketing Pack (UAE)",
+        "formDescription": "Upload a product photo and a few facts. You get back an enhanced marketing image, a short marketing video, and an Arabic caption to review and post.",
+        "formFields": {
+          "values": [
+            { "fieldLabel": "Product Image", "fieldType": "file", "acceptFileTypes": ".jpg,.jpeg,.png,.webp", "multipleFiles": false, "requiredField": true },
+            { "fieldLabel": "Product Name", "fieldType": "text", "requiredField": true },
+            { "fieldLabel": "Key Selling Points", "fieldType": "textarea", "placeholder": "The real facts only. These are the ONLY facts used in the copy.", "requiredField": true },
+            { "fieldLabel": "Style / Brand Notes", "fieldType": "textarea", "placeholder": "Optional: colors, mood, vibe, where it will be posted.", "requiredField": false }
+          ]
+        },
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prep_input",
+      "name": "Prep Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-900, 0],
+      "parameters": {
+        "jsCode": "// Normalize form fields + move the uploaded product image binary to `data`\nconst item = $input.first();\nconst fb = item.binary || {};\nconst key = Object.keys(fb)[0];\nif (!key) {\n  throw new Error('No product image was uploaded in the form.');\n}\nreturn [{\n  json: {\n    product_name: item.json['Product Name'] || 'product',\n    selling_points: item.json['Key Selling Points'] || '',\n    style_notes: item.json['Style / Brand Notes'] || 'none'\n  },\n  binary: { data: fb[key] }\n}];"
+      }
+    },
+    {
+      "id": "atlas_upload",
+      "name": "Atlas Upload Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-680, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.atlascloud.ai/api/v1/model/uploadMedia",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "parameterType": "formBinaryData", "name": "file", "inputDataFieldName": "data" }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "name": "Atlas Cloud API" } }
+    },
+    {
+      "id": "creative_brief",
+      "name": "Creative Brief (Atlas LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-460, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.atlascloud.ai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'deepseek-v3', temperature: 0.7, messages: [ { role: 'system', content: 'You are a marketing creative director for the UAE market. From the product facts the user gives you, produce a creative brief as STRICT JSON only (no prose, no markdown code fences) with EXACTLY these keys: image_prompt, on_image_text_ar, video_prompt, caption_ar. image_prompt: an English prompt to edit the supplied product photo into a premium, scroll-stopping marketing hero shot for a UAE company page; describe lighting, background, composition, mood; keep the real product unchanged and recognizable, do not alter its shape, color, or branding. on_image_text_ar: a very short Gulf-Arabic headline of 3 to 6 words to render on the image; no emojis, no em dashes. video_prompt: an English prompt for an image-to-video model to animate that hero image into an 8 second premium marketing video; describe camera motion, lighting, mood; stay faithful to the product. caption_ar: a ready-to-post Gulf and UAE Arabic ad caption of 2 to 4 short lines with one clear call to action; no emojis, no em dashes. HARD RULES: use ONLY the facts the user provides; never invent specifications, prices, numbers, percentages, claims, awards, or results; never claim anyone researched or inspected the buyer; if a detail is missing, stay general instead of inventing it. Output JSON only.' }, { role: 'user', content: 'Product name: ' + $('Prep Input').first().json.product_name + '\\nKey selling points (the ONLY facts you may use): ' + $('Prep Input').first().json.selling_points + '\\nStyle notes: ' + $('Prep Input').first().json.style_notes } ] }) }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "name": "Atlas Cloud API" } }
+    },
+    {
+      "id": "parse_brief",
+      "name": "Parse Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-240, 0],
+      "parameters": {
+        "jsCode": "// Extract the JSON brief from the chat completion\nconst j = $input.first().json;\nlet raw = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content)\n  || j.content\n  || '';\nif (typeof raw !== 'string') raw = JSON.stringify(raw);\nlet cleaned = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();\nlet brief;\ntry {\n  brief = JSON.parse(cleaned);\n} catch (e) {\n  const m = cleaned.match(/\\{[\\s\\S]*\\}/);\n  if (!m) { throw new Error('Creative Brief did not return valid JSON. Got: ' + raw.slice(0, 300)); }\n  brief = JSON.parse(m[0]);\n}\nreturn [{\n  json: {\n    image_prompt: brief.image_prompt || '',\n    on_image_text_ar: brief.on_image_text_ar || '',\n    video_prompt: brief.video_prompt || '',\n    caption_ar: brief.caption_ar || '',\n    product_name: $('Prep Input').first().json.product_name,\n    input_image_url: $('Atlas Upload Image').first().json.data.download_url\n  }\n}];"
+      }
+    },
+    {
+      "id": "submit_image",
+      "name": "Nano Banana 2 - Submit Edit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-20, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.atlascloud.ai/api/v1/model/generateImage",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/nano-banana-2/edit', prompt: $json.image_prompt + '\\n\\nRender this Arabic headline cleanly and legibly with correct right-to-left Arabic typography: ' + $json.on_image_text_ar, images: [ $json.input_image_url ], aspect_ratio: '1:1', resolution: '2k', output_format: 'png' }) }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "name": "Atlas Cloud API" } }
+    },
+    {
+      "id": "wait_image",
+      "name": "Wait Image",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [200, 0],
+      "parameters": { "amount": 5, "unit": "seconds" },
+      "webhookId": "mpg-wait-image"
+    },
+    {
+      "id": "poll_image",
+      "name": "Poll Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 0],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.atlascloud.ai/api/v1/model/prediction/{{ $('Nano Banana 2 - Submit Edit').first().json.data.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "name": "Atlas Cloud API" } }
+    },
+    {
+      "id": "if_image_done",
+      "name": "IF Image Done",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 0],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "id": "imgdone", "leftValue": "={{ ['completed','succeeded'].includes($json.data.status) }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "if_image_failed",
+      "name": "IF Image Failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 200],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "id": "imgfail", "leftValue": "={{ $json.data.status }}", "rightValue": "failed", "operator": { "type": "string", "operation": "equals" } }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "set_image_ready",
+      "name": "Set Image Ready",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [860, -120],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "eiu", "name": "enhanced_image_url", "value": "={{ $json.data.outputs[0] }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "submit_video",
+      "name": "Kling 3.0 Pro - Submit Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, -120],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.atlascloud.ai/api/v1/model/generateVideo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'kwaivgi/kling-v3.0-pro/image-to-video', image: $('Set Image Ready').first().json.enhanced_image_url, prompt: $('Parse Brief').first().json.video_prompt, duration: 5, cfg_scale: 0.5, negative_prompt: 'low quality, distortion, warped product, watermark, text artifacts, extra limbs' }) }}",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "name": "Atlas Cloud API" } }
+    },
+    {
+      "id": "wait_video",
+      "name": "Wait Video",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1300, -120],
+      "parameters": { "amount": 10, "unit": "seconds" },
+      "webhookId": "mpg-wait-video"
+    },
+    {
+      "id": "poll_video",
+      "name": "Poll Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, -120],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.atlascloud.ai/api/v1/model/prediction/{{ $('Kling 3.0 Pro - Submit Video').first().json.data.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "credentials": { "httpHeaderAuth": { "name": "Atlas Cloud API" } }
+    },
+    {
+      "id": "if_video_done",
+      "name": "IF Video Done",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1740, -120],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "id": "viddone", "leftValue": "={{ ['completed','succeeded'].includes($json.data.status) }}", "rightValue": "", "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "if_video_failed",
+      "name": "IF Video Failed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1740, 80],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            { "id": "vidfail", "leftValue": "={{ $json.data.status }}", "rightValue": "failed", "operator": { "type": "string", "operation": "equals" } }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "set_video_ready",
+      "name": "Set Video Ready",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1960, -240],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "vurl", "name": "video_url", "value": "={{ $json.data.outputs[0] }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "download_image",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2180, -240],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Set Image Ready').first().json.enhanced_image_url }}",
+        "options": { "response": { "response": { "responseFormat": "file", "outputPropertyName": "data" } } }
+      }
+    },
+    {
+      "id": "upload_image",
+      "name": "Upload Image to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2400, -240],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "name": "={{ $('Parse Brief').first().json.product_name }} - marketing image.png",
+        "driveId": { "__rl": true, "mode": "list", "value": "My Drive", "cachedResultName": "My Drive" },
+        "folderId": { "__rl": true, "mode": "list", "value": "root", "cachedResultName": "/ (Root folder)" },
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "credentials": { "googleDriveOAuth2Api": { "name": "Google Drive account" } }
+    },
+    {
+      "id": "download_video",
+      "name": "Download Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, -240],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Set Video Ready').first().json.video_url }}",
+        "options": { "response": { "response": { "responseFormat": "file", "outputPropertyName": "data" } } }
+      }
+    },
+    {
+      "id": "upload_video",
+      "name": "Upload Video to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2840, -240],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "name": "={{ $('Parse Brief').first().json.product_name }} - marketing video.mp4",
+        "driveId": { "__rl": true, "mode": "list", "value": "My Drive", "cachedResultName": "My Drive" },
+        "folderId": { "__rl": true, "mode": "list", "value": "root", "cachedResultName": "/ (Root folder)" },
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "credentials": { "googleDriveOAuth2Api": { "name": "Google Drive account" } }
+    },
+    {
+      "id": "email_draft",
+      "name": "Email Draft to Moamen",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [3060, -240],
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "=Marketing pack جاهز: {{ $('Parse Brief').first().json.product_name }}",
+        "emailType": "html",
+        "message": "=<p>الـ marketing pack بتاع <b>{{ $('Parse Brief').first().json.product_name }}</b> جاهز للمراجعة (اتعمل بالكامل على Atlas Cloud: Nano Banana 2 للصورة و Kling 3.0 Pro للفيديو).</p>\n<p><b>الكابشن (راجعه قبل النشر):</b><br>{{ $('Parse Brief').first().json.caption_ar }}</p>\n<p><b>الصورة:</b> <a href=\"{{ $('Upload Image to Drive').first().json.webViewLink }}\">{{ $('Upload Image to Drive').first().json.webViewLink }}</a></p>\n<p><b>الفيديو:</b> <a href=\"{{ $('Upload Video to Drive').first().json.webViewLink }}\">{{ $('Upload Video to Drive').first().json.webViewLink }}</a></p>\n<p>راجع المحتوى وانشره بنفسك على صفحة الشركة.</p>",
+        "options": { "sendTo": "YOUR_EMAIL@example.com" }
+      },
+      "credentials": { "gmailOAuth2": { "name": "Gmail account" } }
+    },
+    {
+      "id": "gen_failed",
+      "name": "Generation Failed",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [860, 360],
+      "parameters": {
+        "errorType": "errorMessage",
+        "errorMessage": "=Atlas generation failed. Status: {{ $json.data.status }}. Full response: {{ JSON.stringify($json.data) }}"
+      }
+    },
+    {
+      "id": "notes",
+      "name": "Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-1120, -320],
+      "parameters": {
+        "width": 1400,
+        "height": 260,
+        "content": "## Product Marketing Pack Generator (UAE) - Atlas Cloud\nForm upload -> Atlas uploadMedia (host the photo) -> Atlas LLM brief -> Nano Banana 2 edit (image) -> Kling 3.0 Pro (image-to-video) -> download both -> Google Drive -> Gmail draft.\n\nAll AI runs on **Atlas Cloud** (one Bearer API key, HTTP Header Auth credential 'Atlas Cloud API'). Image + video are async: each is submit -> Wait -> Poll -> IF done/failed/loop.\n\n**No fabrication:** the brief prompt uses ONLY the seller-provided facts. **Manual post:** assets + caption land as a Gmail draft; Moamen reviews and posts himself (legal rule).\n\n**Cost (Atlas, paid):** Nano Banana 2 edit ~$0.04-0.08/image; Kling 3.0 Pro ~$0.1-0.3/sec (5s clip). Swap to Veo 3.1 Lite / Seedance Fast / Kling Turbo for cheaper."
+      }
+    }
+  ],
+  "connections": {
+    "Product Marketing Pack (UAE)": { "main": [[{ "node": "Prep Input", "type": "main", "index": 0 }]] },
+    "Prep Input": { "main": [[{ "node": "Atlas Upload Image", "type": "main", "index": 0 }]] },
+    "Atlas Upload Image": { "main": [[{ "node": "Creative Brief (Atlas LLM)", "type": "main", "index": 0 }]] },
+    "Creative Brief (Atlas LLM)": { "main": [[{ "node": "Parse Brief", "type": "main", "index": 0 }]] },
+    "Parse Brief": { "main": [[{ "node": "Nano Banana 2 - Submit Edit", "type": "main", "index": 0 }]] },
+    "Nano Banana 2 - Submit Edit": { "main": [[{ "node": "Wait Image", "type": "main", "index": 0 }]] },
+    "Wait Image": { "main": [[{ "node": "Poll Image", "type": "main", "index": 0 }]] },
+    "Poll Image": { "main": [[{ "node": "IF Image Done", "type": "main", "index": 0 }]] },
+    "IF Image Done": { "main": [[{ "node": "Set Image Ready", "type": "main", "index": 0 }], [{ "node": "IF Image Failed", "type": "main", "index": 0 }]] },
+    "IF Image Failed": { "main": [[{ "node": "Generation Failed", "type": "main", "index": 0 }], [{ "node": "Wait Image", "type": "main", "index": 0 }]] },
+    "Set Image Ready": { "main": [[{ "node": "Kling 3.0 Pro - Submit Video", "type": "main", "index": 0 }]] },
+    "Kling 3.0 Pro - Submit Video": { "main": [[{ "node": "Wait Video", "type": "main", "index": 0 }]] },
+    "Wait Video": { "main": [[{ "node": "Poll Video", "type": "main", "index": 0 }]] },
+    "Poll Video": { "main": [[{ "node": "IF Video Done", "type": "main", "index": 0 }]] },
+    "IF Video Done": { "main": [[{ "node": "Set Video Ready", "type": "main", "index": 0 }], [{ "node": "IF Video Failed", "type": "main", "index": 0 }]] },
+    "IF Video Failed": { "main": [[{ "node": "Generation Failed", "type": "main", "index": 0 }], [{ "node": "Wait Video", "type": "main", "index": 0 }]] },
+    "Set Video Ready": { "main": [[{ "node": "Download Image", "type": "main", "index": 0 }]] },
+    "Download Image": { "main": [[{ "node": "Upload Image to Drive", "type": "main", "index": 0 }]] },
+    "Upload Image to Drive": { "main": [[{ "node": "Download Video", "type": "main", "index": 0 }]] },
+    "Download Video": { "main": [[{ "node": "Upload Video to Drive", "type": "main", "index": 0 }]] },
+    "Upload Video to Drive": { "main": [[{ "node": "Email Draft to Moamen", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Cairo",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  }
+}
