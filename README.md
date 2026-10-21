@@ -1,5 +1,14 @@
 # Marketing Pack Generator
 
+## Project status and evidence
+
+**Portfolio build.** Personal reference adapted from Intuz template #9152 and Dr. Firas template #12462; not a client campaign.
+
+**My contribution:** Adapted community workflow patterns, reworked model/provider integration and prepared human-reviewed image, video and caption outputs.
+
+**Verification:** Public workflow and setup artifacts document the generation/polling flow.
+
+
 Upload one product photo and a few facts, get back a ready-to-review marketing pack for a Gulf/UAE audience: an enhanced hero image with an Arabic headline rendered on it, a short product video generated from that image, and a Gulf-Arabic ad caption. One n8n workflow, one form, one unified AI provider.
 
 ![Marketing Pack Generator](https://raw.githubusercontent.com/Moamen-Elsharkawy/portfolio-assets/main/covers/marketing-pack-generator.png)
@@ -19,7 +28,7 @@ A small business posting a new product has to shoot a hero image, produce a shor
 
 ## Architecture
 
-Both media steps are async: submit, then poll the prediction until it completes, with a shared failure node so the poll loop can never spin forever.
+Both media steps are async: submit, then poll the prediction until it completes, with a shared failure node with explicit failure handling intended to stop unsuccessful generation jobs.
 
 ```mermaid
 flowchart TD
